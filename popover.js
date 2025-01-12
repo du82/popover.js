@@ -301,9 +301,16 @@ class LinkPreview {
     }
 
     savePreviewState() {
+        // Only save if minimized or pinned
+        if (!this.isMinimized && !this.isPinned) {
+            return;
+        }
+
         const state = {
             url: this.activeLink?.href,
-            isMinimized: this.isMinimized,
+            // Always save as minimized if it's pinned or already minimized
+            isMinimized: true,
+            isPinned: this.isPinned,
             title: this.dragHandle.textContent,
             position: {
                 left: this.popover.style.left,
@@ -312,10 +319,19 @@ class LinkPreview {
             }
         };
 
-        // Get existing states or initialize empty array
+        // Get existing states
         const states = JSON.parse(localStorage.getItem('linkPreviews') || '[]');
-        states.push(state);
-        localStorage.setItem('linkPreviews', JSON.stringify(states));
+
+        // Remove this URL if it already exists
+        const filteredStates = states.filter(s => s.url !== state.url);
+
+        // Add new state
+        filteredStates.push(state);
+
+        // Keep only the latest 3 states
+        const latestStates = filteredStates.slice(-3);
+
+        localStorage.setItem('linkPreviews', JSON.stringify(latestStates));
     }
 
     static loadSavedPreviews() {
@@ -324,7 +340,6 @@ class LinkPreview {
             if (state.url) {
                 try {
                     const preview = new LinkPreview();
-                    // Create a fake link element with position data
                     const fakeLink = {
                         href: state.url,
                         getBoundingClientRect: () => ({
@@ -338,14 +353,9 @@ class LinkPreview {
                     };
                     await preview.showPreview(fakeLink);
 
-                    if (state.isMinimized) {
-                        setTimeout(() => preview.toggleMinimize(), 100);
-                    } else {
-                        // Position in the center if not minimized
-                        preview.popover.style.top = '50%';
-                        preview.popover.style.left = '50%';
-                        preview.popover.style.transform = 'translate(-50%, -50%)';
-                    }
+                    // Always restore as minimized
+                    setTimeout(() => preview.toggleMinimize(), 100);
+
                 } catch (error) {
                     console.error('Failed to load saved preview:', error);
                 }
@@ -354,33 +364,51 @@ class LinkPreview {
     }
 
     setupEventListeners() {
+        let hoverTimer = null;
+        const HOVER_DELAY = 1000; // 1 second delay
+        let currentHoverLink = null;
+
         const handleMousePosition = (e) => {
             const link = e.target.closest('a');
             const isOverPopover = e.target.closest('.popover') === this.popover;
 
             if (!link && !isOverPopover) {
-                if (!this.isHovering && !this.isMinimized) {
+                // Clear hover timer when moving away from link
+                if (hoverTimer) {
+                    clearTimeout(hoverTimer);
+                    hoverTimer = null;
+                }
+                currentHoverLink = null;
+                if (!this.isHovering) {
                     this.scheduleHide();
                 }
             } else {
                 clearTimeout(this.hideTimeout);
 
                 if (link && !e.target.closest('.popover')) {
-                    // Only care about links with real URLs
-                    if (link.href && !link.href.startsWith('javascript:')) {
-                        // Check if there's already an active preview for this link
-                        const existingPreview = Array.from(window.linkPreviewInstances)
-                        .find(preview => preview.activeLink === link);
-
-                        if (!existingPreview) {
-                            // If this preview is minimized, create a new one
-                            if (this.isMinimized) {
-                                const newPreview = new LinkPreview();
-                                newPreview.showPreview(link);
-                            } else {
-                                // Otherwise use this preview
-                                this.showPreview(link);
+                    if (!this.isMinimized && link.href && !link.href.startsWith('javascript:')) {
+                        // If it's a new link
+                        if (link !== currentHoverLink) {
+                            // Clear any existing hover timer
+                            if (hoverTimer) {
+                                clearTimeout(hoverTimer);
                             }
+
+                            currentHoverLink = link;
+
+                            // Set new hover timer
+                            hoverTimer = setTimeout(() => {
+                                const existingPreview = Array.from(window.linkPreviewInstances)
+                                .find(preview => preview.activeLink === link);
+
+                                if (!existingPreview) {
+                                    if (!this.isMinimized) {
+                                        this.showPreview(link);
+                                    } else {
+                                        new LinkPreview().showPreview(link);
+                                    }
+                                }
+                            }, HOVER_DELAY);
                         }
                     }
                 }
