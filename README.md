@@ -17,6 +17,6 @@ This single JavaScript file implements draggable, performant, themeable, vanilla
 - [ ] Performant nested previews?
 
 ## Screenshots
-![image](https://github.com/user-attachments/assets/2b02e053-7cdc-48c3-8dc7-2b23b5dbf8c6)
+![image](https://github.com/user-attachments/assets/b6c51bd7-695a-4dce-bde2-592ca953bca2)
 ![image](https://github.com/user-attachments/assets/4271f43f-4287-4fe4-b588-d90a9b8eb027)
 ![image](https://github.com/user-attachments/assets/305c6786-03f4-44f8-9e84-350a6a495447)
