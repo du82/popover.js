@@ -11,9 +11,9 @@ This single JavaScript file implements draggable, performant, themeable, vanilla
 - [x] Sites in the popover inherit the CSS of the parent site
 - [x] Pinning a preview lets you quickly hover over a list of links to view their contents within the pinned preview
 - [x] No nested previews (better performance)
+- [x] Minimizing windows to the bottom left (and stacked windows)
 
 ## Planned features
-- [ ] Minimizing windows to the bottom left (and stacked windows)
 - [ ] Performant nested previews?
 
 ## Screenshots
