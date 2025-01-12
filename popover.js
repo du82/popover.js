@@ -4,12 +4,26 @@ class LinkPreview {
         // Disable on mobile
         if (window.innerWidth < 768) return;
 
+        this.previewInstances = new Set();
+        if (window.linkPreviewInstances) {
+            window.linkPreviewInstances.add(this);
+        } else {
+            window.linkPreviewInstances = new Set([this]);
+        }
+
+        // Save states before page unload
+        window.addEventListener('beforeunload', () => {
+            if (this.activeLink) {
+                this.savePreviewState();
+            }
+        });
+
         // Create the popover element
         this.popover = document.createElement('div');
         this.popover.classList.add('popover');
         this.popover.style.cssText = `
         position: fixed;
-        border: 1px solid #ddd;
+        border: 3px double #ddd;
         display: none;
         width: 400px;
         max-height: 100vh;
@@ -66,6 +80,31 @@ class LinkPreview {
         pointer-events: auto;
         `;
 
+        // Create minimize button with wrapper
+        const minimizeWrapper = document.createElement('div');
+        minimizeWrapper.style.cssText = `
+        width: 20px;
+        height: 20px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        `;
+        this.minimizeButton = document.createElement('div');
+        this.minimizeButton.style.cssText = `
+        color: #323232;
+        line-height: 0;
+        border-radius: 3px;
+        `;
+        this.minimizeButton.innerHTML = `
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width: 16px; height: 16px;">
+        <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        `;
+        minimizeWrapper.appendChild(this.minimizeButton);
+        minimizeWrapper.addEventListener('click', () => this.toggleMinimize());
+        minimizeWrapper.title = 'Minimize preview';
+
         // Create pin button with wrapper for better click handling
         const pinWrapper = document.createElement('div');
         pinWrapper.style.cssText = `
@@ -118,17 +157,34 @@ class LinkPreview {
         `;
         closeWrapper.appendChild(closeButton);
         closeWrapper.addEventListener('click', () => {
+            // Remove this preview's state from localStorage
+            const states = JSON.parse(localStorage.getItem('linkPreviews') || '[]');
+            const updatedStates = states.filter(state => state.url !== this.activeLink?.href);
+            localStorage.setItem('linkPreviews', JSON.stringify(updatedStates));
+
             this.popover.style.display = 'none';
             this.activeLink = null;
             this.isPinned = false;
+            this.isMinimized = false;
             this.pinButton.style.color = '#323232';
+            window.linkPreviewInstances.delete(this);
+            this.adjustOtherMinimized();
+            this.popover.remove();
         });
 
         // Add buttons to container
+        buttonContainer.appendChild(minimizeWrapper);
         buttonContainer.appendChild(pinWrapper);
         buttonContainer.appendChild(closeWrapper);
 
         this.isHovering = false;
+        this.isMinimized = false;
+
+        this.savedPosition = {
+            left: null,
+            top: null,
+            transform: null
+        };
 
         // Assemble the elements
         this.popover.appendChild(this.dragHandle);
@@ -153,8 +209,148 @@ class LinkPreview {
         this.dragHandle.addEventListener('mousedown', (e) => this.dragStart(e));
     }
 
+    toggleMinimize() {
+        this.isMinimized = !this.isMinimized;
+
+        if (this.isMinimized) {
+            // Save current position before minimizing
+            this.savedPosition = {
+                left: this.popover.style.left,
+                top: this.popover.style.top,
+                transform: this.popover.style.transform
+            };
+
+            // Hide content but keep full width
+            this.content.style.display = 'none';
+
+            // Move to bottom left, positioned up by header height * number of existing minimized
+            const stackHeight = this.getStackPosition();
+            this.popover.style.left = '0';
+            this.popover.style.top = `calc(100vh - ${stackHeight + 30}px)`; // 30px is header height
+            this.popover.style.bottom = '';
+            this.popover.style.transform = 'none';
+
+            // Reset offsets
+            this.xOffset = 0;
+            this.yOffset = 0;
+
+            // Change to restore icon
+            this.minimizeButton.innerHTML = `
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width: 16px; height: 16px;">
+            <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <line x1="12" y1="4" x2="12" y2="20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            `;
+            this.minimizeButton.title = 'Restore preview';
+            this.savePreviewState();
+        } else {
+            // Show content
+            this.content.style.display = 'block';
+            this.popover.style.bottom = '';
+
+            // Restore saved position if it exists
+            if (this.savedPosition.left || this.savedPosition.top || this.savedPosition.transform) {
+                this.popover.style.left = this.savedPosition.left || '';
+                this.popover.style.top = this.savedPosition.top || '';
+                this.popover.style.transform = this.savedPosition.transform || '';
+            } else {
+                // If no saved position, use updatePosition
+                this.updatePosition();
+                this.savePreviewState();
+            }
+
+            // Change back to minimize icon
+            this.minimizeButton.innerHTML = `
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" style="width: 16px; height: 16px;">
+            <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            `;
+            this.minimizeButton.title = 'Minimize preview';
+
+            this.adjustOtherMinimized();
+        }
+    }
+
+    getStackPosition() {
+        const minimized = Array.from(document.querySelectorAll('.popover'))
+        .filter(p => p.querySelector('div:nth-child(2)').style.display === 'none');
+
+        const handleHeight = 30; // Header height
+        return minimized.length * handleHeight;
+    }
+
+    adjustOtherMinimized() {
+        const minimized = Array.from(document.querySelectorAll('.popover'))
+        .filter(p => p.querySelector('div:nth-child(2)').style.display === 'none')
+        .sort((a, b) => {
+            const aTop = parseFloat(a.style.top) || window.innerHeight;
+            const bTop = parseFloat(b.style.top) || window.innerHeight;
+            return bTop - aTop;
+        });
+
+        const handleHeight = 30; // Header height
+        minimized.forEach((p, index) => {
+            const fromBottom = (index + 1) * handleHeight;
+            p.style.top = `calc(100vh - ${fromBottom}px)`;
+            p.style.bottom = '';
+        });
+    }
+
     updateTitle(title) {
         this.dragHandle.textContent = title;
+    }
+
+    savePreviewState() {
+        const state = {
+            url: this.activeLink?.href,
+            isMinimized: this.isMinimized,
+            title: this.dragHandle.textContent,
+            position: {
+                left: this.popover.style.left,
+                top: this.popover.style.top,
+                transform: this.popover.style.transform
+            }
+        };
+
+        // Get existing states or initialize empty array
+        const states = JSON.parse(localStorage.getItem('linkPreviews') || '[]');
+        states.push(state);
+        localStorage.setItem('linkPreviews', JSON.stringify(states));
+    }
+
+    static loadSavedPreviews() {
+        const states = JSON.parse(localStorage.getItem('linkPreviews') || '[]');
+        states.forEach(async (state) => {
+            if (state.url) {
+                try {
+                    const preview = new LinkPreview();
+                    // Create a fake link element with position data
+                    const fakeLink = {
+                        href: state.url,
+                        getBoundingClientRect: () => ({
+                            top: 0,
+                            left: 0,
+                            bottom: 0,
+                            right: 0,
+                            width: 0,
+                            height: 0
+                        })
+                    };
+                    await preview.showPreview(fakeLink);
+
+                    if (state.isMinimized) {
+                        setTimeout(() => preview.toggleMinimize(), 100);
+                    } else {
+                        // Position in the center if not minimized
+                        preview.popover.style.top = '50%';
+                        preview.popover.style.left = '50%';
+                        preview.popover.style.transform = 'translate(-50%, -50%)';
+                    }
+                } catch (error) {
+                    console.error('Failed to load saved preview:', error);
+                }
+            }
+        });
     }
 
     setupEventListeners() {
@@ -163,15 +359,29 @@ class LinkPreview {
             const isOverPopover = e.target.closest('.popover') === this.popover;
 
             if (!link && !isOverPopover) {
-                if (!this.isHovering) {
+                if (!this.isHovering && !this.isMinimized) {
                     this.scheduleHide();
                 }
             } else {
                 clearTimeout(this.hideTimeout);
 
                 if (link && !e.target.closest('.popover')) {
-                    if (link !== this.activeLink && link.href && !link.href.startsWith('javascript:')) {
-                        this.showPreview(link);
+                    // Only care about links with real URLs
+                    if (link.href && !link.href.startsWith('javascript:')) {
+                        // Check if there's already an active preview for this link
+                        const existingPreview = Array.from(window.linkPreviewInstances)
+                        .find(preview => preview.activeLink === link);
+
+                        if (!existingPreview) {
+                            // If this preview is minimized, create a new one
+                            if (this.isMinimized) {
+                                const newPreview = new LinkPreview();
+                                newPreview.showPreview(link);
+                            } else {
+                                // Otherwise use this preview
+                                this.showPreview(link);
+                            }
+                        }
                     }
                 }
             }
@@ -378,6 +588,9 @@ class LinkPreview {
     }
 
     async showPreview(link) {
+        if (this.isLoading) return;  // Add this check
+        this.isLoading = true;       // Add this flag
+
         if (this.activeLink === link) return;
 
         this.activeLink = link;
@@ -385,21 +598,13 @@ class LinkPreview {
         this.updateTitle('Loading...');
         this.popover.style.display = 'block';
 
-        // Don't reset transform if it's pinned
-        if (!this.isPinned) {
-            this.xOffset = 0;
-            this.yOffset = 0;
-            this.popover.style.transform = '';
-        }
-
-        this.updatePosition();
-
         try {
             const result = await this.loadContent(link.href);
             if (this.activeLink === link) {
                 this.content.innerHTML = result.content;
                 this.updateTitle(result.title);
                 this.updatePosition();
+                this.savePreviewState();
             }
         } catch (error) {
             console.error('Preview failed:', error);
@@ -414,11 +619,22 @@ class LinkPreview {
                 `;
                 this.updateTitle('Error');
             }
+        } finally {
+            this.isLoading = false;  // Add this to reset the loading state
         }
     }
 
     updatePosition() {
-        if (!this.activeLink || this.popover.style.display === 'none') return;
+        if (!this.activeLink || this.popover.style.display === 'none' || this.isMinimized) return;
+
+        // If this is a restored preview without a real link element
+        if (!this.activeLink.getBoundingClientRect) {
+            // Center in viewport
+            this.popover.style.top = '50%';
+            this.popover.style.left = '50%';
+            this.popover.style.transform = 'translate(-50%, -50%)';
+            return;
+        }
 
         // Don't update position if dragged/pinned
         if (this.isPinned || this.xOffset !== 0 || this.yOffset !== 0) return;
@@ -488,6 +704,7 @@ class LinkPreview {
     }
 
     dragStart(e) {
+        if (this.isMinimized) return; // Add this line
         this.initialX = e.clientX - this.xOffset;
         this.initialY = e.clientY - this.yOffset;
 
@@ -532,4 +749,6 @@ class LinkPreview {
 // Initialize when the DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
     new LinkPreview();
+    // Load any saved previews
+    LinkPreview.loadSavedPreviews();
 });
